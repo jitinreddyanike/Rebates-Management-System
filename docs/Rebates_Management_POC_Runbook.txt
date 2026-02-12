@@ -1,0 +1,190 @@
+REBATES MANAGEMENT API POC - H2 SETUP AND TESTING RUNBOOK
+Version: 1.0
+Date: 2026-02-12
+Project: rebates-management (Spring Boot)
+
+1) PREREQUISITES
+- Java 17 installed
+- Maven installed (or run from IDE)
+- Port 8080 available
+- Postman and/or curl available
+
+2) START THE APPLICATION
+Command:
+  mvn spring-boot:run
+
+Expected startup indicators in logs:
+- "Started RebatesManagementApplication"
+- H2 console enabled at /h2-console
+- No datasource initialization errors
+
+3) OPEN H2 CONSOLE AND CONNECT
+URL:
+  http://localhost:8080/h2-console
+
+Connection values:
+- JDBC URL: jdbc:h2:mem:rebatedb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+- User Name: sa
+- Password: (empty)
+
+Expected result:
+- Connection opens successfully
+- Left pane shows schemas/tables
+
+4) VERIFY DATABASE CONNECTION
+Run SQL:
+  SELECT 1;
+
+Expected result:
+- Single row containing value 1
+
+5) VERIFY TABLE EXISTS
+Run SQL:
+  SELECT TABLE_NAME
+  FROM INFORMATION_SCHEMA.TABLES
+  WHERE TABLE_NAME = 'REBATE_APPLICATION_AUDIT';
+
+Expected result:
+- One row with TABLE_NAME = REBATE_APPLICATION_AUDIT
+
+6) VERIFY STORED PROCEDURE/FUNCTION ALIAS EXISTS
+Run SQL:
+  SELECT ALIAS_NAME
+  FROM INFORMATION_SCHEMA.FUNCTION_ALIASES
+  WHERE ALIAS_NAME = 'SP_SUBMIT_REBATE_APPLICATION';
+
+Expected result:
+- One row with ALIAS_NAME = SP_SUBMIT_REBATE_APPLICATION
+
+7) API CHECK #1 - VERIFY DB ARTIFACTS
+curl command:
+  curl --location --request GET 'http://localhost:8080/api/v1/rebates/db/artifacts'
+
+Expected HTTP status:
+- 200 OK
+
+Expected response body:
+  {
+    "auditTableExists": true,
+    "rebateProcedureExists": true,
+    "databaseProduct": "H2",
+    "message": "H2 artifacts are available"
+  }
+
+8) API CHECK #2 - SUCCESS SCENARIO (SUBMIT REBATE)
+curl command:
+  curl --location 'http://localhost:8080/api/v1/rebates/applications' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "vendorId": "VEND-1001",
+    "vendorName": "Acme Supplies",
+    "productCode": "PRD-REB-01",
+    "quantity": 25,
+    "unitPrice": 150.75,
+    "rebatePercentage": 12.5,
+    "remarks": "Quarterly rebate request"
+  }'
+
+Expected HTTP status:
+- 201 Created
+
+Expected response body pattern:
+  {
+    "transactionId": "<uuid>",
+    "applicationId": <number>,
+    "rebateAmount": 470.00,
+    "status": "SUCCESS",
+    "message": "Rebate application submitted successfully",
+    "processedAt": "<timestamp>"
+  }
+
+Post-call DB verification SQL:
+  SELECT audit_id, vendor_id, vendor_name, product_code, quantity,
+         unit_price, rebate_percentage, remarks, created_at
+  FROM rebate_application_audit
+  ORDER BY created_at DESC;
+
+Expected result:
+- New row inserted for the API call
+
+9) NEGATIVE SCENARIOS
+A) Missing mandatory field (vendorId)
+curl command:
+  curl --location 'http://localhost:8080/api/v1/rebates/applications' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "vendorName": "Acme Supplies",
+    "productCode": "PRD-REB-01",
+    "quantity": 25,
+    "unitPrice": 150.75,
+    "rebatePercentage": 12.5
+  }'
+
+Expected HTTP status:
+- 400 Bad Request
+
+Expected response body pattern:
+  {
+    "errorCode": "VALIDATION_ERROR",
+    "errorMessage": "Request validation failed",
+    "details": ["vendorId: vendorId is required"],
+    "timestamp": "<timestamp>"
+  }
+
+B) Business rule violation (rebatePercentage > 50)
+curl command:
+  curl --location 'http://localhost:8080/api/v1/rebates/applications' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "vendorId": "VEND-1001",
+    "vendorName": "Acme Supplies",
+    "productCode": "PRD-REB-01",
+    "quantity": 25,
+    "unitPrice": 150.75,
+    "rebatePercentage": 55,
+    "remarks": "Invalid percentage"
+  }'
+
+Expected HTTP status:
+- 422 Unprocessable Entity
+
+Expected response body pattern:
+  {
+    "errorCode": "BUSINESS_ERROR",
+    "errorMessage": "rebatePercentage cannot exceed 50",
+    "details": [],
+    "timestamp": "<timestamp>"
+  }
+
+C) Invalid numeric value (quantity <= 0)
+curl command:
+  curl --location 'http://localhost:8080/api/v1/rebates/applications' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "vendorId": "VEND-1001",
+    "vendorName": "Acme Supplies",
+    "productCode": "PRD-REB-01",
+    "quantity": 0,
+    "unitPrice": 150.75,
+    "rebatePercentage": 12.5,
+    "remarks": "Invalid quantity"
+  }'
+
+Expected HTTP status:
+- 400 Bad Request
+
+Expected response body pattern:
+  {
+    "errorCode": "VALIDATION_ERROR",
+    "errorMessage": "Request validation failed",
+    "details": ["quantity: quantity must be greater than 0"],
+    "timestamp": "<timestamp>"
+  }
+
+10) TROUBLESHOOTING QUICK CHECKS
+- If /h2-console does not open, verify app started on port 8080.
+- If function alias is missing, verify schema.sql ran during startup.
+- If POST fails with 500, inspect app logs for database exception details.
+- If curl cannot connect, verify URL and local firewall/port usage.
+
+END OF DOCUMENT
