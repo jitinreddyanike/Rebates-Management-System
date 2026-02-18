@@ -191,5 +191,4 @@ END OF DOCUMENT
 
 Change made
 
-Half Change
 Full Change
